@@ -1,0 +1,4 @@
+DEVICE: "0"
+WEIGHTS_PATH: "C:/Users/hongs/Documents/SR and FI/SR/Real-ESRGAN/results/train/realesrgan_x4-df2k_degradation1/weights/g_best_checkpoint.pkl"
+INPUTS: "demo/data"
+OUTPUT: "demo/output"

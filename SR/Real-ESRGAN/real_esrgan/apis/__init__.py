@@ -1,0 +1,3 @@
+from .large_image_super_resolution import LargeImageSuperResolutionInferencer
+from .super_resolution import SuperResolutionInferencer
+from .video_super_resolution import VideoSuperResolutionInferencer
