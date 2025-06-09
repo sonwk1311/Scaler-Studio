@@ -8,8 +8,8 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QPushButton, QLabel, QFileDialog, QRadioButton, QButtonGroup, 
                              QComboBox, QProgressBar, QFrame, QSizePolicy, QSlider, QMessageBox,
                              QCheckBox, QGroupBox, QTabWidget, QSpinBox)
-from PyQt5.QtGui import QPixmap, QImage, QColor, QPainter, QBrush, QLinearGradient, QPen, QFont, QPainterPath, QIcon
-from PyQt5.QtCore import Qt, QRect, QRectF, QSize, QThread, pyqtSignal, QTimer
+from PyQt5.QtGui import QPixmap, QImage, QColor, QPainter, QBrush, QLinearGradient, QPen, QFont, QPainterPath, QIcon, QPolygon
+from PyQt5.QtCore import Qt, QRect, QRectF, QSize, QThread, pyqtSignal, QTimer, QPoint
 import time
 import shutil
 import subprocess
@@ -22,13 +22,10 @@ except ImportError:
     OMEGACONF_AVAILABLE = False
     print("OmegaConf not available - Real-ESRGAN API features will be limited")
 
-# Add paths for both SR methods
 sys.path.append(r"C:\Users\hongs\Documents\SR and FI\SR\Real-ESRGAN")
 sys.path.append(r"C:\Users\hongs\Documents\SR and FI\SR\SwinIR")
 
-# Add paths for Frame Interpolation methods
 sys.path.append(r"C:\Users\hongs\Documents\SR and FI\FI\CAIN")
-
 
 # Import Real-ESRGAN modules
 try:
@@ -69,7 +66,6 @@ try:
 except Exception as e:
     RIFE_AVAILABLE = False
     print("❌ Error loading RIFE module:", e)
-
 
 class RoundedImageLabel(QLabel):
     """Custom QLabel with rounded corners for displaying images"""
@@ -131,6 +127,49 @@ class RoundedImageLabel(QLabel):
             painter.setPen(QPen(QColor("#808080")))
             painter.setFont(QFont("Segoe UI", 12))
             painter.drawText(rect, Qt.AlignCenter, "No Media Selected")
+
+class ClickableSlider(QSlider):
+    """Custom QSlider that jumps to clicked position immediately"""
+    
+    def __init__(self, orientation, parent=None):
+        super().__init__(orientation, parent)
+        
+    def mousePressEvent(self, event):
+        """Override mouse press to jump directly to clicked position"""
+        if event.button() == Qt.LeftButton:
+            # Calculate the position based on where the user clicked
+            if self.orientation() == Qt.Horizontal:
+                # For horizontal slider
+                slider_length = self.width() - self.style().pixelMetric(self.style().PM_SliderLength)
+                click_pos = event.x() - (self.style().pixelMetric(self.style().PM_SliderLength) // 2)
+                
+                # Ensure click position is within valid range
+                click_pos = max(0, min(click_pos, slider_length))
+                
+                # Calculate value based on position
+                value_range = self.maximum() - self.minimum()
+                new_value = self.minimum() + (click_pos / slider_length) * value_range
+                
+                # Set the new value
+                self.setValue(int(new_value))
+                
+                # Emit the sliderPressed signal to start seeking
+                self.sliderPressed.emit()
+                
+            else:
+                # For vertical slider (if needed in future)
+                slider_length = self.height() - self.style().pixelMetric(self.style().PM_SliderLength)
+                click_pos = self.height() - event.y() - (self.style().pixelMetric(self.style().PM_SliderLength) // 2)
+                
+                click_pos = max(0, min(click_pos, slider_length))
+                value_range = self.maximum() - self.minimum()
+                new_value = self.minimum() + (click_pos / slider_length) * value_range
+                
+                self.setValue(int(new_value))
+                self.sliderPressed.emit()
+        
+        # Call the parent implementation for other functionality
+        super().mousePressEvent(event)
 
 class CAINVideoWorker(QThread):
     """Worker thread for CAIN frame interpolation with iterative approach"""
@@ -218,7 +257,7 @@ class CAINVideoWorker(QThread):
             
             # Initialize CAIN model
             device = torch.device(self.device)
-            model = CAIN(depth=3)  # Default depth
+            model = CAIN(depth=3)
             model = torch.nn.DataParallel(model).to(device)
             
             # Load checkpoint
@@ -471,7 +510,6 @@ class RIFEVideoWorker(QThread):
             if device.type == 'cuda':
                 torch.cuda.empty_cache()
             
-            # Load model using the same method as inference_video.py
             model = self.load_model(self.model_path, device)
             
             self.progress_updated.emit(15)
@@ -1171,6 +1209,7 @@ class ProcessingTab(QWidget):
         self.current_video_path = None
         self.enhanced_video_path = None  # Store enhanced video path
         self.saved_file_path = None  # Store saved file path for open location
+        self.current_player_path = None  # Track current player's video path
         self.is_playing = False
         self.video_duration = 0
         self.video_fps = 30.0  # Default FPS, will be updated when loading video
@@ -1584,7 +1623,7 @@ class ProcessingTab(QWidget):
         
         # Video controls frame
         video_controls = QFrame()
-        video_controls.setFixedHeight(80)  # Increased height for better layout
+        video_controls.setFixedHeight(80)
         video_controls_layout = QVBoxLayout(video_controls)
         video_controls_layout.setContentsMargins(0, 5, 0, 5)
         video_controls_layout.setSpacing(8)
@@ -1592,35 +1631,39 @@ class ProcessingTab(QWidget):
         # Playback controls
         playback_layout = QHBoxLayout()
         
-        # Play/Pause button
+        # Play/Pause button with icons
         self.play_button = QPushButton()
         self.play_button.setFixedSize(40, 40)
         self.play_button.setStyleSheet("""
             QPushButton {
-                background-color: rgba(255, 255, 255, 30);
-                border: 2px solid rgba(255, 255, 255, 50);
-                border-radius: 20px;
-                font-size: 16px;
-                font-weight: bold;
-                color: white;
+                background-color: transparent;
+                border: none;
+                padding: 0px;
             }
             QPushButton:hover {
-                background-color: rgba(255, 255, 255, 40);
+                background-color: rgba(255, 255, 255, 10);
+                border-radius: 20px;
             }
             QPushButton:pressed {
                 background-color: rgba(255, 255, 255, 20);
+                border-radius: 20px;
             }
             QPushButton:disabled {
-                background-color: rgba(255, 255, 255, 10);
-                color: rgba(255, 255, 255, 50);
+                background-color: transparent;
             }
         """)
-        self.play_button.setText("▶")
+        
+        # Load icons
+        self.load_playback_icons()
+        
+        # Set initial play icon
+        self.play_button.setIcon(self.play_icon)
+        self.play_button.setIconSize(QSize(35, 35))
         self.play_button.clicked.connect(self.toggle_playback)
         self.play_button.setDisabled(True)
         
-        # Video progress slider
-        self.video_progress = QSlider(Qt.Horizontal)
+        # Video progress slider - USE CUSTOM SLIDER
+        self.video_progress = ClickableSlider(Qt.Horizontal)
         self.video_progress.setRange(0, 100)
         self.video_progress.setValue(0)
         self.video_progress.setStyleSheet("""
@@ -1643,7 +1686,15 @@ class ProcessingTab(QWidget):
                 border-radius: 4px;
             }
         """)
-        self.video_progress.sliderPressed.connect(self.seek_video)
+        
+        # Add seeking state flags
+        self.is_seeking = False
+        self.was_playing_before_seek = False
+        
+        # Connect signals for proper seeking behavior
+        self.video_progress.sliderPressed.connect(self.start_seeking)
+        self.video_progress.sliderMoved.connect(self.seek_video)
+        self.video_progress.sliderReleased.connect(self.end_seeking)
         self.video_progress.setDisabled(True)
         
         # Time labels
@@ -1659,19 +1710,17 @@ class ProcessingTab(QWidget):
         
         video_controls_layout.addLayout(playback_layout)
         
-        # Video info and status (updated to show current view info)
+        # Rest of the video controls setup...
         self.video_info_label = QLabel("No video loaded")
         self.video_info_label.setStyleSheet("color: black; font-size: 10px; font-weight: bold;")
         self.video_info_label.setAlignment(Qt.AlignCenter)
         video_controls_layout.addWidget(self.video_info_label)
         
-        # Current view indicator for video
         self.view_indicator = QLabel("Viewing: Original")
         self.view_indicator.setStyleSheet("color: black; font-size:10px; font-weight: bold;")
         self.view_indicator.setAlignment(Qt.AlignCenter)
         video_controls_layout.addWidget(self.view_indicator)
         
-        # Codec info
         if self.tab_type == "interpolation":
             codec_info = QLabel("Frame Interpolation • Supported: MP4, AVI, MOV")
         else:
@@ -1685,6 +1734,83 @@ class ProcessingTab(QWidget):
         # Timer for updating video progress
         self.video_timer = QTimer()
         self.video_timer.timeout.connect(self.update_video_progress)
+
+    def load_playback_icons(self):
+        """Load play and pause icons from image files"""
+        try:
+            # Try to load play icon
+            if os.path.exists("img/play.png"):
+                self.play_icon = QIcon("img/play.png")
+            else:
+                # Fallback: create a simple play icon or use text
+                self.play_icon = QIcon()
+                print("Warning: img/play.png not found, using fallback")
+            
+            # Try to load pause icon
+            if os.path.exists("img/pause.png"):
+                self.pause_icon = QIcon("img/pause.png")
+            else:
+                # Fallback: create a simple pause icon or use text
+                self.pause_icon = QIcon()
+                print("Warning: img/pause.png not found, using fallback")
+                
+            # If icons couldn't be loaded, create fallback text-based icons
+            if self.play_icon.isNull():
+                self.create_fallback_icons()
+                
+        except Exception as e:
+            print(f"Error loading icons: {e}")
+            self.create_fallback_icons()
+
+    def create_fallback_icons(self):
+        """Create simple fallback icons if image files are not found"""
+        # Create play icon (triangle)
+        play_pixmap = QPixmap(24, 24)
+        play_pixmap.fill(Qt.transparent)
+        painter = QPainter(play_pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setBrush(QBrush(QColor("white")))
+        painter.setPen(Qt.NoPen)
+        
+        # Draw triangle
+        triangle = QPolygon([
+            QPoint(6, 4),
+            QPoint(6, 20),
+            QPoint(20, 12)
+        ])
+        painter.drawPolygon(triangle)
+        painter.end()
+        self.play_icon = QIcon(play_pixmap)
+        
+        # Create pause icon (two rectangles)
+        pause_pixmap = QPixmap(24, 24)
+        pause_pixmap.fill(Qt.transparent)
+        painter = QPainter(pause_pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setBrush(QBrush(QColor("white")))
+        painter.setPen(Qt.NoPen)
+        
+        # Draw two rectangles
+        painter.drawRect(6, 4, 4, 16)
+        painter.drawRect(14, 4, 4, 16)
+        painter.end()
+        self.pause_icon = QIcon(pause_pixmap)
+
+    def start_seeking(self):
+        """Called when user starts seeking"""
+        self.is_seeking = True
+        self.was_playing_before_seek = self.is_playing
+        if self.is_playing:
+            self.pause_video()
+        # Immediately seek to the new position
+        self.seek_video()
+
+    def end_seeking(self):
+        """Called when user finishes seeking"""
+        self.is_seeking = False
+        # Resume playback if it was playing before seeking
+        if self.was_playing_before_seek:
+            self.play_video()
     
     # Video Playback Methods
     def toggle_playback(self):
@@ -1699,7 +1825,7 @@ class ProcessingTab(QWidget):
             self.play_video()
     
     def play_video(self):
-        """Start video playback with smart path selection and correct FPS"""
+        """Start video playback with smart path selection and position preservation"""
         # Determine which video to play based on current view
         video_path = None
         
@@ -1717,27 +1843,61 @@ class ProcessingTab(QWidget):
             return
             
         try:
-            # Release previous player if exists
-            if self.media_player:
-                self.media_player.release()
-                
-            self.media_player = cv2.VideoCapture(video_path)
-            if not self.media_player.isOpened():
-                QMessageBox.warning(self, "Playback Error", "Could not open video file for playback")
-                return
-                
-            # Update video duration and FPS for the current video
-            self.video_duration = int(self.media_player.get(cv2.CAP_PROP_FRAME_COUNT))
-            self.video_fps = self.media_player.get(cv2.CAP_PROP_FPS)
+            # Check if we need to create a new player or if we can reuse the existing one
+            need_new_player = False
+            current_position = 0
             
+            if self.media_player:
+                # Check if the current player is for the same video file
+                current_video_path = getattr(self, 'current_player_path', None)
+                if current_video_path != video_path:
+                    # Different video file, need new player
+                    need_new_player = True
+                    self.media_player.release()
+                else:
+                    # Same video file, preserve current position
+                    current_position = self.media_player.get(cv2.CAP_PROP_POS_FRAMES)
+                    
+                    # Check if we're at the end of the video
+                    if current_position >= self.video_duration - 1:
+                        # At the end, reset to beginning
+                        current_position = 0
+                        self.media_player.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        self.video_progress.setValue(0)
+            else:
+                # No existing player
+                need_new_player = True
+                
+            # Create new player if needed
+            if need_new_player:
+                self.media_player = cv2.VideoCapture(video_path)
+                if not self.media_player.isOpened():
+                    QMessageBox.warning(self, "Playback Error", "Could not open video file for playback")
+                    return
+                    
+                # Store the current player's video path
+                self.current_player_path = video_path
+                
+                # Update video duration and FPS for the current video
+                self.video_duration = int(self.media_player.get(cv2.CAP_PROP_FRAME_COUNT))
+                self.video_fps = self.media_player.get(cv2.CAP_PROP_FPS)
+                
+                # Get current progress bar position and seek to it if it's not at the beginning
+                progress_position = self.video_progress.value()
+                if progress_position > 0:
+                    target_frame = int((progress_position / 100) * self.video_duration)
+                    self.media_player.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+                    current_position = target_frame
+                
             # Calculate correct timer interval based on video FPS
             if self.video_fps > 0:
                 timer_interval = int(1000 / self.video_fps)  # Convert to milliseconds
             else:
                 timer_interval = 33  # Fallback to ~30 FPS
             
+            # Start playback
             self.is_playing = True
-            self.play_button.setText("⏸")
+            self.play_button.setIcon(self.pause_icon)  # Change to pause icon
             self.video_timer.start(timer_interval)  # Use actual video FPS
             
             # Update view indicator
@@ -1747,13 +1907,16 @@ class ProcessingTab(QWidget):
                 view_text = "Enhanced" if video_path == getattr(self, 'enhanced_video_path', None) else "Original"
             self.view_indicator.setText(f"👁️ Playing: {view_text} ({self.video_fps:.1f} FPS)")
             
+            # Update the current frame display immediately
+            self.update_video_frame()
+            
         except Exception as e:
             QMessageBox.warning(self, "Playback Error", f"Could not play video: {str(e)}")
-    
+            
     def pause_video(self):
         """Pause video playback"""
         self.is_playing = False
-        self.play_button.setText("▶")
+        self.play_button.setIcon(self.play_icon)  # Change to play icon
         self.video_timer.stop()
         
         # Update view indicator
@@ -1762,7 +1925,7 @@ class ProcessingTab(QWidget):
         else:
             view_text = "Enhanced" if self.current_view == "enhanced" else "Original"
         self.view_indicator.setText(f"👁️ Viewing: {view_text}")
-    
+
     def seek_video(self):
         """Seek video to slider position with validation"""
         if not self.media_player or self.video_duration == 0:
@@ -1774,12 +1937,21 @@ class ProcessingTab(QWidget):
         # Ensure frame number is within valid range
         frame_number = max(0, min(frame_number, self.video_duration - 1))
         
-        self.media_player.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
-        self.update_video_frame()
+        try:
+            self.media_player.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+            self.update_video_frame()
+            
+            # Update time labels immediately
+            if self.video_fps > 0:
+                current_time = int(frame_number / self.video_fps)
+                self.current_time_label.setText(f"{current_time//60:02d}:{current_time%60:02d}")
+                
+        except Exception as e:
+            print(f"Error seeking video: {e}")
     
     def update_video_progress(self):
-        """Update video progress during playback with error handling"""
-        if not self.media_player or not self.is_playing:
+        """Update video progress during playback"""
+        if not self.media_player or not self.is_playing or self.is_seeking:
             return
             
         try:
@@ -1788,7 +1960,10 @@ class ProcessingTab(QWidget):
             
             # Ensure progress is within valid range
             progress = max(0, min(progress, 100))
-            self.video_progress.setValue(progress)
+            
+            # Only update slider if user is not seeking
+            if not self.is_seeking:
+                self.video_progress.setValue(progress)
             
             # Update time labels using actual video FPS
             if self.video_fps > 0:
@@ -1827,14 +2002,27 @@ class ProcessingTab(QWidget):
                 self.media_label.setPixmap(pixmap)
             else:
                 # End of video - reset to beginning
-                self.pause_video()
-                self.video_progress.setValue(0)
-                if self.media_player:
-                    self.media_player.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                    
+                if not self.is_seeking:
+                    self.pause_video()
+                    self.video_progress.setValue(0)
+                    if self.media_player:
+                        self.media_player.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        # Show first frame
+                        ret, frame = self.media_player.read()
+                        if ret:
+                            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                            if not frame_rgb.flags['C_CONTIGUOUS']:
+                                frame_rgb = np.ascontiguousarray(frame_rgb)
+                            h, w, c = frame_rgb.shape
+                            q_img = QImage(frame_rgb.data, w, h, w * c, QImage.Format_RGB888)
+                            pixmap = QPixmap.fromImage(q_img)
+                            self.media_label.setPixmap(pixmap)
+                            self.media_player.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        
         except Exception as e:
             print(f"Error updating video frame: {e}")
-            self.pause_video()
+            if not self.is_seeking:
+                self.pause_video()
     
     # File Management Methods
     def update_availability_status(self):
@@ -1996,11 +2184,11 @@ class ProcessingTab(QWidget):
                         self.media_player.release()
                         self.media_player = None
                     self.is_playing = False
-                    self.play_button.setText("▶")
+                    self.play_button.setIcon(self.play_icon)
                     self.video_timer.stop()
                     
                     # Update view indicator
-                    self.view_indicator.setText("Viewing: Original")
+                    self.view_indicator.setText("👁️ Viewing: Original")
                 
                 self.status_label.setText(f"Video loaded - {width}x{height}, {frame_count} frames, {fps:.1f} FPS")
             else:
@@ -2438,10 +2626,17 @@ class ProcessingTab(QWidget):
         if view == self.current_view:
             return
         
-        # Pause any current playback when switching views
+        # Store current playback state and position
+        was_playing = False
+        current_progress = 0
+        
         if hasattr(self, 'is_playing') and self.is_playing:
+            was_playing = True
+            current_progress = self.video_progress.value()
             self.pause_video()
-            
+        elif hasattr(self, 'video_progress'):
+            current_progress = self.video_progress.value()
+                
         if view == "original" and self.original_media is not None:
             # Display original frame
             h, w, c = self.original_media.shape
@@ -2462,6 +2657,13 @@ class ProcessingTab(QWidget):
                 if hasattr(self, 'view_indicator'):
                     self.view_indicator.setText("👁️ Viewing: Original")
                 self.update_video_info_display()
+                
+                # Reset media player to force reload with correct video path
+                if hasattr(self, 'media_player') and self.media_player:
+                    self.media_player.release()
+                    self.media_player = None
+                    if hasattr(self, 'current_player_path'):
+                        delattr(self, 'current_player_path')
             
         elif view == "enhanced" and self.enhanced_media is not None:
             # Display enhanced frame
@@ -2493,6 +2695,36 @@ class ProcessingTab(QWidget):
                     else:
                         self.view_indicator.setText("👁️ Viewing: Enhanced")
                 self.update_video_info_display()
+                
+                # Reset media player to force reload with correct video path
+                if hasattr(self, 'media_player') and self.media_player:
+                    self.media_player.release()
+                    self.media_player = None
+                    if hasattr(self, 'current_player_path'):
+                        delattr(self, 'current_player_path')
+        
+        # Restore playback state for videos
+        if self.tab_type in ["video", "interpolation"] and was_playing:
+            # Small delay to ensure the view has switched properly
+            QTimer.singleShot(100, lambda: self.restore_playback_state(current_progress, True))
+        elif self.tab_type in ["video", "interpolation"] and current_progress > 0:
+            # Preserve position even if not playing
+            QTimer.singleShot(100, lambda: self.restore_playback_state(current_progress, False))
+
+    def restore_playback_state(self, progress, should_play):
+        """Helper method to restore playback state after view switching"""
+        try:
+            if hasattr(self, 'video_progress'):
+                self.video_progress.setValue(progress)
+                
+            if should_play:
+                self.play_video()
+            else:
+                # Just seek to the position without playing
+                self.seek_video()
+                
+        except Exception as e:
+            print(f"Error restoring playback state: {e}")
 
             
 class CombinedSRGUI(QMainWindow):
