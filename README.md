@@ -1,4 +1,4 @@
-# Super-Resolution & Frame Interpolation Suite
+# SCALER STUDIO
 
 A comprehensive PyQt5-based GUI application for AI-powered image and video enhancement, featuring super-resolution and frame interpolation capabilities.
 
